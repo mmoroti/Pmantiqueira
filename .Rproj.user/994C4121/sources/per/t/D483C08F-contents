@@ -1,0 +1,791 @@
+---
+title: 'Boas práticas em análises de séries temporais em herpetologia'
+author: "Karoline Ceron, Marcos R. Severgnini e Diogo B. Provete"
+date: "28/10/2020"
+output: 
+  html_document: 
+    toc: yes
+---
+
+Vamos iniciar carregando os pacotes necessários! 
+Caso você não os tenha instalados, instale-os com a função *install.packages("nome do pacote")* e depois carregue-os.
+
+```{r setup}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, error=FALSE)
+install.packages("AEM", repos="http://R-Forge.R-project.org")
+library(GGally)
+library(nlme) 
+library(mgcv)
+library(tidyverse)
+library(lmtest)
+library(bbmle)
+library(tseries)
+library(astsa)
+library(circular)
+library(adespatial)
+library(ade4)
+library(adegraphics)
+library(expsmooth)
+library(vegan)
+library(AEM)
+```
+
+
+# MODELOS DE PREVISÃO
+
+## ARIMA
+
+Vamos carregar a planilha *bonds* do pacote *expsmooth* que indica os rendimentos mensais de títulos do governo dos EUA. Aqui vamos considerar estes dados como sendo a abundância relativa de girinos em uma poça permanente. 
+
+```{r}
+gir<-bonds
+```
+
+Agora vamos visualizar os dados e decompô-los
+
+```{r}
+plot(decompose(gir))
+```
+
+Observe o padrão sazonal cíclico apresentado na figura
+
+Existe uma função no R para verificar o número de diferenças necessárias para transformar uma série temporal em estacionária. 
+
+```{r}
+ndiffs(gir)
+```
+
+Os métodos usados para testar a estacionariedade em cada etapa são - o teste de Dickey-Fuller aumentado, o teste de raiz unitária Phillips-Perron e o teste de estacionariedade KPSS.
+
+```{r}
+adf.test(gir); pp.test(gir); kpss.test(gir)
+```
+
+Note que a hipótese alternativa do teste ADF e do PP é a estacionaridade, ao contrário do teste KPSS. A partir disso não podemos concluir que nossos dados são estacionários. 
+
+Vamos tentar diferenciar nossos dados
+
+```{r}
+tsdisplay(diff(gir))
+```
+
+A sazonalidade pode ser identificada nas séries diferenciadas - evidentes na ACF. A série residual parece ter uma variação semelhante ao longo do tempo (PACF). Contudo, a sazonalidade ainda é aparente na ACF. Portanto, precisamos removê-la dos dados 
+
+```{r}
+tsdisplay(decompose(gir)$random)
+```
+
+Melhorou bastante, mas talvez ainda apresente alguns vestígios de sazonalidade. 
+
+Agora vamos encontrar um modelo adequado aos nossos dados
+
+```{r}
+arimaModel <- auto.arima(gir)
+summary(arimaModel)
+```
+
+O modelo ideal para os dados é p = 0, q = 1, d = 1,  e o modelo tem diferença 1 entre os valores de frequência 12. O *p=0* nos diz que não precisamos levar em conta defasagens em um determinado ponto no tempo *t*. *q=1* nos diz que a série temporal não é estacionária, portanto, precisamos ter uma diferença de primeira ordem. *d=1* nos diz que esse modelo leva em consideração o termo de erro de 1 valor anterior/atrasados.
+
+```{r}
+acf(arimaModel$residuals)
+```
+
+A ACF dos resíduos do modelo mostra que a maior parte das autocorrelações estão dentro dos limites indicando que os resíduos não apresentam autocorrelação serial.
+
+Agora vamos fazer a previsão
+
+```{r}
+fcast <- forecast(arimaModel)
+```
+
+Criando o gráfico de previsão
+
+```{r}
+plot(fcast, ylab="Abundância de girinos", xlab="Anos")
+```
+
+Aqui está a previsão para os anos seguintes, onde a parte em azul reflete os intervalos de previsão de 80% e 95%.
+
+Resultado do modelo
+
+```{r}
+summary(fcast)
+```
+
+## ARIMA com sazonalidade = SARIMA
+
+Vamos iniciar criando um vetor hipotetico para riqueza de anuros em uma comunidade
+
+```{r}
+sp_vector <- c(19,19,19,27,20,9,10,9,3,1,2,1,1,11,19,19,19,27,20,20,6,5,2,1,2,9,9,11,19,19,9,8,8,5,1,3,8,9,10,9,12,11,7,5,5,4,2,2,7,10,8,10,19,20,7,5)
+```
+
+Indicando que a série temporal inicia em Setembro (9) de 2014 e tem frequência de 12 meses
+
+```{r}
+sp_ts <- ts(sp_vector,start=c(2014,9),frequency=12)
+sp_ts
+```
+
+Verificando se apresenta padrão sazonal
+
+```{r}
+tsdisplay(decompose(sp_ts)$random)
+```
+
+O gráfico mostrou um claro efeito sazonal
+
+Agora vamos ver qual modelo mais se adequa aos nossos dados. Veja que o modelo é o mesmo ARIMA mas adicionamos o parâmetro *d*, que indica sazonalidade
+
+```{r}
+sarimaModel <- auto.arima(sp_ts, d = 1)
+summary(sarimaModel)
+```
+
+O modelo ideal para os dados é p = 1, q = 0, d = 0,  e o modelo tem diferença 1 entre os valores de frequência 12. 
+
+```{r}
+acf(sarimaModel$residuals)
+```
+
+A ACF dos resíduos do modelo mostra que a maior parte das autocorrelações estão dentro dos limites. Assim, o modelo ainda pode ser utilizado para a previsão, mas os intervalos preditos podem não ser muito acurados
+
+Fazendo a previsão do modelo e plotando
+
+```{r}
+sarima<-forecast(sarimaModel, h=25)
+plot(sarima, ylab="Riqueza de anuros", xlab="Anos")
+```
+
+Aqui está a previsão para os anos seguintes, onde a parte em azul reflete os intervalos de previsão de 80% e 95%.
+
+# ANÁLISES UNIVARIADAS
+
+Vamos imaginar que temos dados de composição de uma comunidade de anuros e também dados abióticos, temperatura, precipitação e umidade, coletados mensalmente durante um ano. A partir disso queremos investigar se a composição da comunidade de anuros (riqueza e abundância) é influenciada pelas variáveis abióticas locais.
+Vamos começar! 
+
+
+Importando os dados de demonstração
+
+```{r}
+dados<-read.table("data.txt", header=T) #composição de espécies de uma comunidade de anuros no Parque Estadual da Serra Furada, SC.
+dados
+```
+
+Antes de realizar as análises para verificar a influência das variáveis preditoras sobre a riqueza ou abundância dos anuros precisamos padronizar os dados, pois dados de precipitação, temperatura e umidade possuem diferentes unidades de medida (C°, %, mm). dados_pad = dados padronizados
+
+```{r}
+dados_pad <- decostand(dados[,c(2,3,4)], "standardize")
+```
+
+Começaremos as análises dos nossos dados verificando o principal pressuposto estatístico: a normalidade da nossa variável resposta (se possui a curva em forma de sino), que nesse caso será a abundância e riqueza dos anuros
+
+```{r}
+hist(dados$abundancia) #verificando visualmente
+
+ggplot(dados, aes(abundancia))+ 
+  geom_density(aes(fill="red", col="red"))
+
+hist(dados$riqueza)
+
+ggplot(dados, aes(riqueza))+ 
+  geom_density(aes(fill="red", col="red"))
+```
+
+
+Podemos também verificar visualmente com o ggpairs
+
+```{r}
+ggpairs(dados)
+```
+
+Ele nos dá uma panomara geral dos nossos dados, incluindo a correlação entre as variáveis
+
+Nossos dados não apresentam distribuíção normal, neste caso temos que aplicar um testes NÃO-PARAMÉTRICO (veja a FIG. 1 do manuscrito)
+
+Vamos começar realizando uma **CORRELAÇÃO DE SPEARMAN**. Os valores das correlações variam entre -1 e 1. A correlação de 1 indica uma associação linear positiva entre as variáveis (quando uma variável aumenta a outra aumenta na mesma direção) a correlação de -1 indica uma perfeita associação linear negativa (quando uma variável aumenta a outra diminui) 
+
+Vamos testar a correlação entre abundância dos anuros e a precipitação durante 12 meses. 
+
+```{r}
+cor.test(dados_pad$precipitacao,dados$abundancia,  method = "spearm")
+```
+
+*P* não significativo (p>0.05), ou seja, não há uma correlação entre as variáveis
+
+Vamos testar agora a correlação entre abundância dos anuros e a temperatura
+
+```{r}
+cor.test(dados_pad$temperatura, dados$abundancia, method = "spearm")
+```
+
+*P* significativo (p = 0.04), ou seja, há uma correlação entre as variáveis coeficiente (rho) = 0.59, ou seja, correlação positiva.
+
+Agora vamos visualizar essa relação:
+
+```{r}
+plot(dados_pad$temperatura, dados$abundancia, xlab = "Temperatura °C", ylab = "Abundância de anuros")
+```
+
+Veja que há uma tendência do aumento da abundância dos anuros (eixo Y) em função da temperatura (eixo X)
+
+Agora vamos importar dados hipotéticos para o cálculo de uma correlação com dados normalizados, com um teste **PARAMÉTRICO**
+
+```{r}
+dados_normal<-read.table("normal.txt", header=T) 
+dados_normal
+```
+
+Vamos testar novamente a normalidade dos dados
+
+```{r}
+hist(dados_normal$abundancia) 
+lines(density(dados_normal$abundancia),col="red",lwd=2)
+```
+
+Agora sim, estamos trabalhando com dados normalizados
+
+A partir disso podemos realizar a **CORRELAÇÃO DE PEARSON**, uma análise não-paramétrica
+
+```{r}
+cor.test(dados_normal$temperatura, dados_normal$abundancia, method = "pearson")
+```
+
+Há correlação, Coeficiente (r) = 0.59, ou seja, correlação positiva.
+
+**No entanto, como você leu no artigo, a correlação não é recomendada para dados com autocorrelação temporal, ou seja, dados que não possuem dependência temporal entre si**
+
+Para lidar com isso, vamos utilizar uma **REGRESSÃO**
+
+Vamos visualizar a relação entre a abundância dos anuros e a temperatura
+
+```{r}
+plot(abundancia ~ temperatura,data=dados_normal)
+```
+
+Criaremos um modelo simples (linear) para iniciar
+
+```{r}
+mod.ols <- lm(abundancia ~ temperatura,data=dados_normal)
+summary(mod.ols)
+```
+
+Ele indica que há relação entre as variáveis
+
+No entanto, vamos checar os resíduos da regressão para ser se o modelo está adequado com nossos dados
+
+```{r}
+par(mfrow=c(2,2))
+plot(mod.ols)
+par(mfrow=c(1,1))
+```
+
+Há um claro padrão nos resíduos. Isso indica que nossa variável apresenta correlação temporal.
+
+Vamos realizar um teste para ter certeza
+
+```{r}
+dwtest(mod.ols, alternative="two.sided")
+```
+
+Caso não haja autocorrelação, os valores de p seriam <0.5
+Isso indica que o modelo linear não é adequado para nossos dados
+
+# Regressão dos mínimos quadrados generalizados (GLS)
+
+Vamos criar um GLS sem incluir nenhuma estrutura de correlação, que é basicamente a regressão linear feita anteriormente
+
+```{r}
+mod.gls <- gls(abundancia ~ temperatura, data=dados_normal)
+```
+
+Agora um modelo GLS indicando que nossos dados são distribuídos temporalmente.
+Lembrando que o GLS é utilizado apenas com dados contínuos (distribuição Gaussiana). Vamos considerar neste exemplo que os dados de abundância representeam a *altura de empoleiramento de lagartos* em uma floresta. Aqui indicamos a variável (mês das coletas), indicando que os dados são correlacionados temporalmente e que a lag são os meses
+
+```{r}
+mod.gls1 <- gls(abundancia ~ temperatura, data=dados_normal, correlation=corAR1(form=~mes))
+```
+
+Você pode testar as várias opcões de correlações existentes nesta função. Veja o help da função para maiores detalhes 
+
+```{r}
+?gls
+```
+
+Vamos criar outro modelo alterando a estrutura de correlação
+
+```{r}
+mod.gls2 <- gls(abundancia ~ temperatura, data=dados_normal, correlation=corARMA(p = 1, q = 1))
+```
+
+Agora vamos usar a **seleção de modelos** para ver qual se adequa melhor aos nossos dados 
+
+```{r}
+AICctab(mod.gls1, mod.gls2,base=T, weights=T)
+```
+
+A função *AICctab* pode apresentar como resultado o ranqueamento dos modelos em ordem decrescente, com seu respectivo AIC, número de paramêtros, delta AICc (que é que diferença entre AICc do modelo e o menor AICc) e o AICweight.  Importante salientar que a escolha do limite do valor de dAICc que considera dois ou mais modelos igualmente plausíveis sugerido por Burnham & Anderson (2003) é 2. No entanto, a utilização de um limite menor pode ficar a critério da parcimônia do cientista. Aqui vamos considerar que o modelo mais adequado foi o modelo 1.
+
+A partir disso, vamos ver se o probelma de autocorrelação temporal foi resolvido através da análise dos resíduos
+
+```{r}
+acf(residuals(mod.gls1))
+```
+
+Os resíduos ficaram ok, a linha azul significa que apenas uma das médias das autocorrelações excedeu o limite de confiança. No entanto, sem um parâmetro para controlar os efeitos de correlação, as estimativas do modelo não são confiáveis
+
+
+# GAM (modelos aditivos generalizados)
+
+Vamos iniciar o uso do GAM pelo modelo mais simples e ver se ele resolve o problema de autocorrelação dos resíduos
+
+```{r}
+gam1 <- gam(abundancia ~ temperatura + s(mes), data = dados, family = poisson)
+```
+
+Checando o modelo. A função gam.check auxilia a visiualização da distribuição dos redíduos em relação a um preditor linear. Ele ajuda a verificar um dos pressupostos do modelo que é homogeneidade
+
+```{r}
+acf(residuals(gam1))
+gam.check(gam1)
+```
+
+Os resíduos são semelhantes em relação ao GLS, porém sem um parâmetro para controlar os efeitos de correlação, as estimativas do modelo não são confiáveis
+
+Obtendo o resultado do modelo
+
+```{r}
+summary(gam1)
+```
+
+Vamos ver se com um modelo misto que controla variáveis de correlação, os resíduos melhoram
+
+## GAMM (modelos aditivos generalizados mistos)
+Para dados com variável resposta em prorporção ou contagem.
+Aqui utilizaremos os mesmos dados de abundância dos anuros e a temperatura de cada local amostrado ao longo do ano.
+
+Criando o modelo
+
+```{r}
+gamm1 <- gamm(abundancia ~ temperatura + s(mes),data = dados, family = poisson)
+```
+
+Note que este modelo possui dois novos argumentos (*s* e *family*). O *s* é o *smooth*, onde indicamos que nossa variável resposta está relacionada com esta outra variável, no caso o mês. No *family* indicamos o tipo dos nossos dados. Nossa variável resposta é dado de contagem (abundância) então nesse caso a familia indicada é Poisson. 
+
+Vamos checar os resíduos da regressão para ver se há ainda indícios de autocorrelação dos dados
+
+```{r}
+acf(residuals(gamm1$gam))
+gam.check(gamm1$gam)
+```
+
+Os resíduos estão ok, mas vamos ver se podemos melhorar eles
+
+Obtendo o resultado do modelo
+```{r}
+summary(gamm1$gam, cor = FALSE)
+```
+
+A abundância é influenciada pela temperatura e nossa variável smooth teve relação com a variável resposta
+
+Vamos tentar aprimorar nosso modelo gamm usando uma estrutura de correlação
+
+```{r}
+gamm2 <- gamm(abundancia ~ temperatura+ s(mes), data=dados, correlation=corAR1(form=~mes), family = poisson)
+```
+
+Aqui também indicamos o modelo de correlação, assim como no gls
+
+Checando os resíduos
+
+```{r}
+acf(residuals(gamm2$gam))
+gam.check(gamm2$gam)
+```
+
+Será que este modelo é o mais adequado para nossos dados?
+
+```{r}
+summary(gamm2$gam, cor = FALSE)
+```
+
+Veja que o valor de *p* da regressão aumentou, assim como o valor da influencia do *smooth*
+
+Vamos testar com mais um modelo e ver se os resíduos melhoram.
+
+```{r}
+gamm3 <- gamm(abundancia ~ s(temperatura)+s(mes),
+correlation = corARMA(form = ~ mes, p=1, q=1), family = poisson, data=dados)
+```
+
+Checando os redíduos   
+
+```{r}
+acf(residuals(gamm3$gam))
+gam.check(gamm3$gam)
+```
+
+Será que ele é o melhor modelo para explicar os dados?
+
+Obtendo o resultado do modelo
+
+```{r}
+summary(gamm3$gam)
+```
+
+Vamos checar isso através do AIC
+```{r}
+AICctab(gamm3$lme, gamm2$lme, gamm1$lme, mod.gls1 ,base=T, weights=T)
+```
+
+De acordo com a seleção, o modelo mais adequado é o gamm1! 
+No entanto, temos que lembrar que ele é um modelo misto sem estrutura de correlação, ou seja é semelhante ao GLS. Ele terá resultados mais significativos, mas os valores não são confiáveis. Poderíamos escolher aqui o gamm2 como melhor modelo.
+
+Agora vamos testar mais um pressuposto do modelo com Poisson: a *overdispersion*! Isso acontece quando a variação é maior do que seria esperado (i.e., quando a variância é maior que a média). Ao contrário da distribuição normal, que tem um parâmetro para média e outro para a variância, a distribuição de Poisson tem um parâmetro só – assumindo assim que a média é igual à variância (Zuur et al. 2009). No entanto, isso pode não acontecer. Assim, quando os dados são mais dispersos do que seria esperado numa distribuição de Poisson temos a superdispersão. Quando isso ocorre podemos incluir um parâmetro de variância no modelo (mudar a family para quasipoisson, family=quasipoisson) ou mudar para distribuição binomial negativa (usando a função glm.nb do pacote MASS). A distribuição binomial negativa permite modelar a variância separadamente da média utilizando dois parâmetros diferentes, fazendo com que a variância possa ser maior do que a média (Zuur et al. 2009).  
+
+Se o valor for 0, o modelo não apresenta *overdispersion*
+
+```{r}
+e1<-resid(gamm2, typpe="pearson")
+overdispersion<-sum(e1^2)/gamm2$gam$df.residual
+overdispersion
+```
+
+Pronto! 
+
+# ESTATÍSTICA CIRCULAR TESTE DE RAYLEIGH
+
+Esse teste tem a premissa da normalidade de *Von Mises*
+
+```{r}
+watson.test(dados$riqueza, dist="vonmises")
+```
+
+Os dados apresentam a distribuição normal de *Von Mises*
+
+Agora vamos transformar nossos dados de riqueza em um objeto circular
+
+```{r}
+x <- circular(dados$riqueza)
+print(x)
+```
+
+Fazendo o teste de Rayleigh para ver se nossos dados de riqueza apresentam um padrão sazonal
+
+```{r}
+rayleigh.test(x, mu = NULL)
+```
+
+A riqueza de anuros não apresenta um padrão sazonal
+
+Vamos ver isso com a ajuda de um gráfico
+
+```{r}
+ggplot(dados, aes(x = riqueza, fill = riqueza)) +
+  geom_histogram(breaks = seq(0,  12), colour = "grey") +
+  coord_polar(start = 0) + theme_minimal() +
+  scale_fill_brewer() + ylab("Número de espécies") +
+  ggtitle("Riqueza por meses do ano") +  
+  scale_x_continuous("", limits = c(0, 12), breaks = seq(0, 12), labels = seq(0,12))
+```
+
+Agora vamos criar um vetor circular
+
+```{r}
+y <- rvonmises(n=25, mu=circular(pi), kappa=2)
+```
+
+E realizar o mesmo teste
+
+```{r}
+rayleigh.test(y, mu = NULL)
+```
+
+O valor de *p* foi 0, indicando que os dados estão distribuídos de forma sazonal
+
+Criando uma imagem simples desta relação
+
+```{r}
+rose.diag(y, bin = 12, col = "lightblue", main = "Evento por hora", 
+    prop = 2, axes = T)
+```
+
+
+# MÉTODOS MULTIVARIADOS
+
+## Space-time interaction (Legendre et al. 2010)
+
+Carregando dados de abundância de uma metacomunidade de anuros (Ceron et al. 2020)
+
+```{r}
+spi <- read.table("spatio_temporal.txt", h=TRUE)
+head(spi)
+```
+
+Transformando os dados de abundancia utilizando Hellinger para diminuir a diferença entre as espécies
+
+```{r}
+spi.std <- decostand(spi[,-c(1,2)], "hell")
+head(spi.std)
+dim(spi.std)
+```
+
+Rodando a análise STI. *S* é o número de áreas amostradas e *Ti* é o número de campanhas amostrais
+
+```{r}
+stimodels(spi.std, S=6, Ti=12)
+```
+
+Os dados de abundância das comunidades apresentam interação espaço-temporal (Interaction test p=0.003), do mesmo modo que apresentam variação apenas no espaço (Space test) e também apenas no tempo (Time test). Resumindo, a composição da comunidades varia tanto no tempo quanto no espaço. 
+
+## STATICO
+
+Carregando os dados da composição da comunidade (espécies por locais), variáveis ambientais (locais por variáveis) e uma matriz indicando como as unidades amostrais estão arranjadas nas estações do ano. Dados obtidos em Ceron et al. (2020).
+
+```{r}
+design <- read.table("design.txt", h=TRUE)
+head(design)
+
+spe <- read.table("spatio.txt", h=TRUE)
+head(spe)
+spe <- spe[,-c(1,2)]
+
+env <- read.table("env1.txt", h=TRUE) 
+head(env)
+env <- env[,-c(1,2)]
+head(env)
+```
+
+Transformando os dados de abundancia utilizando Hellinger para diminuir a heterogeneidade de abundância entre as espécies
+
+```{r}
+spe_std <- decostand(spe, "hell", MARGIN = 2)
+```
+
+Agora vamos iniciar os três passos da análise. Iremos rodar primeiramente uma análise de correspondência na matriz de composição das espécies. 
+
+```{r}
+speca <- dudi.coa(spe_std, nf = 2, scan = FALSE)
+```
+
+Em seguida, vamos inserir o resultado da CA em uma espécie de PCA
+
+
+```{r}
+wit22 <- wca(speca, as.factor(design$season), scan = FALSE, nf = 2)
+```
+
+Agora, devemos transformar nosso objeto da função anterior em uma tabela-k, ou seja, uma série de tabelas que serão analisadas posteriormente em conjunto
+
+```{r}
+kta22 <- ktab.within(wit22)
+spl0 <- split(env, design$season)
+spl1 <- split(kta22$cw, design$season)
+```
+
+Por fim, iremos preparar os dados para executar a Análise Triádica Parcial, que resume as informações das duas análises multivariadas anteriores
+
+```{r}
+spl2 <- lapply(1:4, function(k) scalewt(spl0[[k]], wt = spl1[[k]], scale = FALSE))
+w <- NULL
+for (k in 1:4) w <- rbind.data.frame(w, spl2[[k]])
+p1 <- apply(w, 2, function(x) sqrt(sum(x*x*kta22$cw)/4))
+w <- sweep(w, 2, p1, "/")
+apply(w, 2, function(x) sum(x*x*kta22$cw))
+w <- as.data.frame(t(w))
+kta12 <- ktab.data.frame(w, rep(6, 4), tabnames=tab.names(kta22), w.row=rep(1, 4), w.col = kta22$cw)
+ktacroi <- ktab.match2ktabs(kta12, kta22)
+statico12 <- pta(ktacroi, scan = FALSE)
+```
+
+Agora vamos gerar os mapas informativos:
+O primeiro demonstra a semelhança entre cada par de matrizes e exibe para cada estação/ano/mês a semelhança entre as variáveis ambientais, as espécies e os locais estudados
+
+```{r}
+plot(statico12, plabels.boxes.draw = FALSE)
+kplot(statico12, plabels.boxes.draw = FALSE)
+```
+
+O segundo ilustra a ordenação das variáveis ambientais e das espécies em um espaço reduzido, indicando a relação espaço-ambiente
+
+```{r}
+slE <- s.label(statico12$Tli, facets = statico12$TL[, 1], labels = statico12$TL[, 2], psub.cex = 2, plabel=list(col = "red", cex=1.5, optim=TRUE), plot=FALSE)
+saE <- s.arrow(statico12$Tli, facets = statico12$TL[, 1], psub.cex = 0, plabels.cex=0, plines.lwd=0.5, plot=FALSE)
+sE <- superpose(slE, saE)
+slH <- s.label(statico12$Tco, facets = statico12$TC[, 1], labels = statico12$TC[, 2], psub.cex = 2, plabel=list(col = "blue", cex=1.5, optim=TRUE), plot=FALSE)
+saH <- s.arrow(statico12$Tco, facets = statico12$TC[, 1], psub.cex = 0, plabel.cex=0, plines.lwd=0.5, plot=FALSE)
+sH <- superpose(slH, saH)
+sE1 <- sE[1:4]
+sH1 <- sH[1:4]
+sE1@positions <- layout2position(c(6,1))
+sH1@positions <- layout2position(c(6,1))
+sEH1 <- ADEgS(list(sE1, sH1), layout=c(1,2))
+```
+
+E o terceiro mapeia a trajetória das espécies e das variáveis ambientais em cada estação/ano/mês a fim de resumir a estrutura das matrizes cruzadas 
+
+```{r}
+st1 <- s.traject(statico12$supIX, facets=statico12$supTI[,1], plabels.cex=0, plot=FALSE, psub.cex=0, plines.lwd=0.5)
+sla1 <- s.label(statico12$supIX, facets=statico12$supTI[,1], plot=FALSE, psub.cex=.8, labels=statico12$supTI[,2], plabels=list(cex=.8, col="red", optim=TRUE))
+s1 <- superpose(st1, sla1)
+st2 <- s.traject(statico12$supIY, facets=statico12$supTI[,1], plabels.cex=0, plot=FALSE, psub.cex=0, plines.lwd=0.5)
+sla2 <- s.label(statico12$supIY, facets=statico12$supTI[,1], plot=FALSE, psub.cex=.8, labels=statico12$supTI[,2], plabels=list(cex=0.8, col="blue", optim=TRUE))
+s2 <- superpose(st2, sla2)
+ADEgS(list(s1,s2), layout = c(2,1))
+```
+
+Para maiores informações em como interpretar os gráficos consulte: 
+
+- Slimani, N., Guilbert, E., El Ayni, F., Jrad, A., Boumaiza, M., & Thioulouse, J. (2017). The use of STATICO and COSTATIS, two exploratory threeways analysis methods: An application to the ecology of aquatic heteroptera in the Medjerda watershed (Tunisia). Environmental and Ecological Statistics, 24(2), 269–295. https://doi.org/10.1007/s10651-017-0370-6
+
+- Ceron, K, Santana, DJ, Lucas, EM, Zocche, JJ, Provete, DB. Climatic variables influence the temporal dynamics of an anuran metacommunity in a nonstationary way. Ecol Evol. 2020; in press. https://doi.org/10.1002/ece3.6217
+
+- Kidé, S. O., Manté, C., Dubroca, L., Demarcq, H., & Mérigot, B. (2015). Spatio-temporal dynamics of exploited groundfish species assemblages faced to environmental and fishing forcings: Insights from the mauritanian exclusive economic zone. PLoS ONE, 10, e0141566. https://doi.org/10.1371/journal.pone.0141566
+
+
+## Asymmetric Eigenvectors Maps - AEM
+
+Vamos construir um conjunto fictício de variáveis AEM com base em amonstragens de uma comunidades anualmente
+
+```{r}
+time1 <- c(1, 2, 3, 4, 5, 6, 7, 8)
+time2 <- c(10, 1, 9, 0, 0, 5, 0, 0)
+time3 <- c(9, 11, 1, 2, 3, 7, 8, 9)
+time4 <- c(6, 14, 5, 11, 5, 3, 5, 8)
+time5 <- c(2, 8, 4, 15, 3, 0, 15,4)
+time6 <- c(7, 14, 16, 1, 20, 11, 7, 4)
+time7<- c(4, 1, 2, 15, 1, 20, 1, 10)
+time8 <- c(0, 1, 6, 16, 1, 10, 2, 1)
+time9 <- c(0, 1, 6, 16, 1, 10, 2, 1)
+time10 <- c(8, 7, 6, 5, 1,3, 2, 1)
+time11 <- c(0, 1, 6, 16, 1, 10, 2, 1)
+time12 <- c(6, 0, 6, 16, 1, 0, 2, 1)
+time13 <- c(5, 1, 7, 16, 1, 10, 2, 1)
+time14 <- c(4, 1, 0, 8, 1, 9, 2, 1)
+time15 <- c(3, 0, 6, 16, 1, 10,12, 1)
+time16 <- c(2, 1, 6, 16, 1, 10, 2, 0)
+time17 <- c(1, 1, 6, 16, 1, 10, 2, 1)
+time18 <- c(9, 11, 1, 2, 3, 7, 8, 9)
+time19 <- c(10, 1, 9, 0, 0, 5, 0, 0)
+time20 <- c(1, 2, 3, 4, 5, 6, 7, 8)
+arbor <- rbind(time1, time2, time3, time4, time5, time6, time7, time8, time9, time10, time11, time12, time13, time14, time15, time16, time17, time18, time19, time20)
+```
+
+Criando as datas de amonstragens, iniciando em 5 de Setembro de 2000
+
+```{r}
+dates <- as.Date(c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20),origin="2000/1/1")
+autocor.limit <- 522 
+```
+
+Construindo um vetor de pesos para as arestas, cada um representando a facilidade de troca entre datas adjacentes (nós).
+
+```{r}
+weights <- weight.time(dates, alpha=2, max.d = 522)
+```
+
+Calculando os vetores AEM (20 é o número de amostras)
+
+```{r}
+aem.40.out <- aem.time(20, w=weights, moran=TRUE, plot.moran=TRUE)
+aem.40.out$Moran
+```
+
+19 vetores foram criados a partir dos dados: 
+
+ * 9 AEM modelando uma correlação temporal positiva
+ * 10 AEM modelando uma correlação temporal negativa
+
+Calculando a análise de redundância (RDA) das espécies pela matriz de auto-vetores AEM modelando a correlação temporal positiva
+
+```{r}
+fauna.aem.40.pos <- rda(arbor, aem.40.out$aem[, aem.40.out$Moran$Positive])
+anova(fauna.aem.40.pos)
+RsquareAdj(fauna.aem.40.pos)
+```
+
+Modelando a correlação temporal negativa
+
+```{r}
+fauna.aem.40.neg <- rda(arbor, aem.40.out$aem[, !aem.40.out$Moran$Positive])
+anova(fauna.aem.40.neg)
+RsquareAdj(fauna.aem.40.neg)
+```
+
+Selecionado os AEM que entrarão na modelagem
+
+```{r}
+sel.aem.40 <- forward.sel(arbor, aem.40.out$aem, nperm=9999, alpha=0.10)
+sel.aem.40
+```
+
+Não inclua as variáveis selecionadas com valores de *p* muito maiores que 0.05
+
+Três modelos: todos os AEM selecionados, depois os que modelam correlação positiva e negativa
+
+```{r}
+aem.select <- sort(sel.aem.40$order[sel.aem.40$pval<=0.08])
+aem.select.pos <- c(2,4)
+aem.select.neg <- c(10,19)
+
+```
+
+Verificar em `aem.40.out$Moran` quais foram positivos e  negativos
+
+Plote os AEMs selecionados:
+
+```{r}
+par(mfrow=c(3,3))
+```
+
+os positivos
+
+```{r}
+for(i in 1:2) { # 2 é o número de variáveis selecionadas
+  plot(dates, aem.40.out$aem[,aem.select.pos[i]], type="b", pch=19, main = paste("Positive", aem.select.pos[i]), xlab="Date", ylab="AEM", ylim=c(-0.3,0.3))
+}
+```
+
+e os negativos
+
+```{r}
+for(i in 1:2) {
+  plot(dates, aem.40.out$aem[,aem.select.neg[i]], type="b", pch=19, main =
+         paste("Negative", aem.select.neg[i]), xlab="Date", ylab="AEM", col="red", col.main="red", ylim=c(-0.3,0.3))
+}
+par(mfrow=c(1,1))
+```
+
+Calcular RDA das espécies pelo AEM selecionado em cada grupo (positivo, negativo), p <= 0,08
+
+```{r}
+fauna.aem.40.pos.5 <- rda(arbor~ ., as.data.frame(aem.40.out$aem[,aem.select.pos]))
+anova(fauna.aem.40.pos.5, by="axis")
+RsquareAdj(fauna.aem.40.pos.5)
+fauna.aem.40.neg.4 <- rda(arbor~ ., as.data.frame(aem.40.out$aem[,aem.select.neg]))
+anova(fauna.aem.40.neg.4, by="axis")
+RsquareAdj(fauna.aem.40.neg.4)
+```
+
+Visualizar os eixos da RDA dos modelos significativos de AEM produzidos pelo AEM selecionado
+
+```{r}
+par(mfrow=c(3,1))
+```
+
+os positivos
+
+```{r}
+for(i in 1:2) {
+  plot(dates, scores(fauna.aem.40.pos.5, display="lc", choices=i), type="b", pch=19, main
+       = paste("RDA axis", i, ", positive temporal correlation model"), xlab="Years", ylab="RDA axis")
+}
+```
+
+e o único negativo
+
+```{r}
+plot(dates, scores(fauna.aem.40.neg.4, display="lc", choices=1), type="b", pch=19, main
+     = paste("RDA axis", 1, ", negative temporal correlation model"), xlab="Years", ylab="RDA axis", col="red", col.main="red")
+par(mfrow=c(1,1))
+```

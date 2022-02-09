@@ -1,0 +1,156 @@
+###------------------------------------------------------
+# Thu Jan 21 11:49:35 2021 ------------------------------
+# Filling the knowledge gaps of the rare and potentially threatened Paratelmatobius mantiqueira
+
+#Carregando pacotes
+library(circular)
+library(tidyverse)
+library(nlme)
+library(vegan)
+library(mgcv)
+
+# Estabelecendo diretório e carregando arquivos
+setwd("E:/Projeto Dacnis/Trabalhos em andamento/Paratelmatobius/analises_paratelmatobius_morotietal")
+dir()
+monitoring.para <- read.table("Para.csv", sep = ";", h=T)
+str(monitoring.para)
+
+#monitoring.para$X <- as.factor(monitoring.para$X)
+#monitoring.para$temp <- as.factor(monitoring.para$temp)
+#monitoring.para$umi <- as.factor(monitoring.para$umi)
+
+# Antes de realizar as an?lises para verificar a influ?ncia das vari?veis preditoras sobre a riqueza ou abund?ncia dos anuros precisamos padronizar os dados, pois dados de precipita??o, temperatura e umidade possuem diferentes unidades de medida (C?, %, mm). dados_pad = dados padronizados
+
+dados_pad <- decostand(monitoring.para[,c(2,3)], "standardize")
+
+#Agrupando e retirando dados antigos
+para <- cbind(monitoring.para, dados_pad)
+para <- para[,-c(2,3,4)]
+
+# Checando distribui??o dos dados
+hist(para$cap)
+
+### GAMM (modelos aditivos generalizados mistos)
+# Para dados com vari?vel resposta em prorpor??o ou contagem.
+# Aqui utilizaremos os mesmos dados de abund?ncia dos anuros e a temperatura de cada local amostrado ao longo do ano.
+gamm
+
+# Testando estruturas de correla??o para os dados
+#corAR1
+gamm1 <- gamm(cap ~ umi + temp + s(mes), data = para, correlation = corAR1(form=~mes), family = poisson)
+
+gamm3 <- gamm(cap ~ umi + temp + s(mes), data = para, correlation = corCAR1(form=~mes), family = poisson)
+
+gamm5 <- gamm(cap ~ umi + temp + s(mes),correlation = corExp(form=~mes), data = para, family = poisson)
+
+gamm6 <- gamm(cap ~ umi + temp + s(mes), data = para, correlation = corLin(form=~mes), family = poisson)
+
+gamm7 <- gamm(cap ~ umi + temp + s(mes), data = para,correlation = corGaus(form=~mes), family = poisson)
+
+gamm8 <- gamm(cap ~ umi + temp + s(mes), correlation = corRatio(form=~mes), data = para, family = poisson)
+
+gamm9 <- gamm(cap ~ umi + temp + s(mes), data = para,correlation = corSpher(form=~mes), family = poisson)
+
+AICctab(gamm1$lme, gamm3$lme, gamm7$lme, gamm8$lme, gamm9$lme, gamm5$lme, gamm6$lme, base=T, weights=T)
+
+summary(gamm1$gam)
+
+# Conferindo pressuposto de overdispersion
+#Se o valor for 0, o modelo não apresenta *overdispersion*
+e1<-resid(gamm1, typpe="pearson")
+overdispersion<-sum(e1^2)/gamm1$gam$df.residual
+overdispersion
+
+#Feito!
+
+# Para testarmos se a ocorr?ncia de P. mantiqueira tem um padr?o de ocorr?ncia sazonal, n?s aplicamos o teste de Rayleigh 
+dir()
+dados <- read.table("data.txt", h=T)
+watson.test(para$cap, dist="vonmises", alpha=0.05)
+
+?watson.test
+
+# Circular
+x <- circular(para$cap)
+print(x)
+rayleigh.test(x, mu = circular(pi))
+
+rao.spacing.test(x)
+
+summary(y)
+
+?rayleigh.test
+# Plot circular
+ggplot(para, aes(x = cap, fill = mes)) +
+  geom_histogram(breaks = seq(1,  12), colour = "grey") +
+  coord_polar(start = 0) + theme_minimal() +
+  scale_fill_brewer() + ylab("Detectabilidade") +
+  ggtitle("Occurence") +  
+  scale_x_continuous("",limits = c(0, 12),breaks = seq(0, 12), labels = seq(0,12))
+
+###
+# Thu May 27 16:22:30 2021 ------------------------------
+# Dimorfismo sexual
+# Testar diferen?a dos tamanhos
+dir()
+svl <- read.table("paratelmatobius_svl.txt", h=T)
+svl
+View(svl)
+
+# Olhando os dados
+# M?dia, desvio padr?o e range dos machos
+mean(svl$M) # 16.34 machos
+sd(svl$M) # +- 0.33
+range(svl$M)
+
+# M?dia, desvio padr?o e range das f?meas
+mean(svl$F) # 17.28 femeas
+sd(svl$F) # +- 0.34 
+range(svl$F)
+
+# Testando normalidade dos dados
+#From the output, the p-value > 0.05 implying that the distribution of the data are not significantly different from normal distribution. In other words, we can assume the normality.
+shapiro.test(svl$svl[svl$sex=="macho"])
+shapiro.test(svl$svl[svl$sex=="femea"])
+
+#Homogeinedade de vari?ncias
+library(car)
+leveneTest()
+
+# Test t
+t.test(svl$svl ~ svl$sex, alternative="two.sided", var.equal=T)
+###
+
+# Sun May 30 15:38:47 2021 ------------------------------
+# Imagens do canto Paratelmatobius mantiqueira
+# Carregando pacotes
+library(seewave)
+library(tuneR)
+library(rgl)
+
+#
+getwd()
+dir()
+adv.call <- readWave("Id3_10_complexo.wav")
+release <- readWave("cantosolturafig1.wav")
+agressive <- readWave("id9_c16_Nota X.wav")
+
+oscillo(adv.call)
+oscillo(adv.call, from=4, to=4.5, fastdisp=TRUE)
+
+spectro(adv.call,from=4, to=4.5, fastdisp=TRUE)
+spectro(adv.call, osc=TRUE)
+
+# Controlando eixos x e y respectivamente
+# Canto de an?ncio
+spectro(adv.call, osc=TRUE, grid=FALSE, scale = TRUE,
+        tlim = c(50, 50.6), flim = c(0, 8), collevels = seq(-30, 0, 0.1), palette =  spectro.colors,
+        cexaxis=1.4, cexlab=1.3, scalecexlab = 1.2)
+
+# release call
+spectro(release, osc=TRUE, grid=FALSE, scale = TRUE,
+        tlim = c(0, 0.5), flim = c(0, 18), cexaxis=1.4, cexlab=1.3, scalecexlab = 1.2)
+
+# agressive call
+spectro(agressive, osc=TRUE, grid=FALSE, scale = TRUE,
+        tlim = c(5, 7), flim = c(0, 5.5), cexaxis=1.4, cexlab=1.3, scalecexlab = 1.2)

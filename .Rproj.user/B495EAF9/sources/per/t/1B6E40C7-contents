@@ -1,0 +1,9 @@
+###------------------------------------------------------
+# Thu Jan 21 11:49:35 2021 ------------------------------
+# Filling the knowledge gaps of the rare and potentially threatened Paratelmatobius mantiqueira
+
+# Estabelecendo diretório e carregando arquivos
+
+getwd()
+dir()
+monitoring.para <- 

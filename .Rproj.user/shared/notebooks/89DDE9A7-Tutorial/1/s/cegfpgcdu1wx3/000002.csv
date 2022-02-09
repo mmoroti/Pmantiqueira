@@ -1,0 +1,19 @@
+"0","gamm1 <- gamm(abundancia ~ temperatura + s(mes),data = dados, family = poisson)
+"
+"1","
+ Maximum number of PQL iterations: "
+"1"," "
+"1","20"
+"1"," "
+"1","
+"
+"2","iteration 1
+"
+"2","nlminb problem, convergence error code = 1
+  message = singular convergence (7)"
+"2","iteration 2
+"
+"2","iteration 3
+"
+"2","iteration 4
+"

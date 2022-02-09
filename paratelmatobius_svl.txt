@@ -1,0 +1,17 @@
+sex	svl
+macho	16.8
+macho	16.2
+macho	16.1
+macho	15.9
+macho	16.52
+macho	16.82
+macho	16.3
+macho	16.1
+femea	17.1
+femea	17.37
+femea	16.9
+femea	17.5
+femea	17.53
+femea	17.8
+femea	17.3
+femea	16.76
